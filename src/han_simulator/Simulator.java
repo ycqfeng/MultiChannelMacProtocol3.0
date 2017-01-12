@@ -18,6 +18,7 @@ public class Simulator implements IF_HprintNode{
     private IF_Simulator[] interfaces;
     //结束标志
     boolean executeFinish;
+    boolean isPrintProcessInformation;
     //格式化
     private DecimalFormat decimalFormat;
 
@@ -28,6 +29,7 @@ public class Simulator implements IF_HprintNode{
         Hprint.printlnt(simulator.getStringPosition()+"仿真器完成初始化");
         simulator.curTime = 0;
         simulator.stopTime = 0;
+        simulator.isPrintProcessInformation = false;
         simulator.decimalFormat = new DecimalFormat("#.00");
     }
 
@@ -228,7 +230,9 @@ public class Simulator implements IF_HprintNode{
                 progress = 100 * this.curTime/this.stopTime;
                 if (progress - difProgress >1){
                     endPoint = System.currentTimeMillis();
-                    System.out.println(decimalFormat.format(progress)+"%, 耗时："+(endPoint-startPoint)+"ms");
+                    if (isPrintProcessInformation){
+                        System.out.println(decimalFormat.format(progress)+"%, 耗时："+(endPoint-startPoint)+"ms");
+                    }
                     difProgress = Math.floor(progress);
                     startPoint = System.currentTimeMillis();
                 }

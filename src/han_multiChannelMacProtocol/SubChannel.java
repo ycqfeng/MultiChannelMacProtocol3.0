@@ -13,11 +13,22 @@ public class SubChannel implements IF_Simulator, IF_HprintNode{
 
     private Channel channel;
 
+    private double bps = 1000;
+
     public SubChannel(Channel channel){
         this.uid = uidBase++;
         this.channel = channel;
         addSubChannel(this);
 
+    }
+
+    public double send(Packet packet){
+        return packet.getLength()/bps;
+
+    }
+
+    public double getTransTime(Packet packet){
+        return packet.getLength()/bps;
     }
 
     public int getUid(){
