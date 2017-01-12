@@ -1,9 +1,6 @@
 package han_multiChannelMacProtocol;
 
-import han_simulator.Hprint;
-import han_simulator.IF_HprintNode;
-import han_simulator.IF_Simulator;
-import han_simulator.Simulator;
+import han_simulator.*;
 
 /**
  * Created by ycqfeng on 2017/1/11.
@@ -103,6 +100,18 @@ class MPChannel implements IF_HprintNode{
 
     public void text(){
 
+    }
+    public void turnToNAV(int index, double duration){
+        if (this.subChannelStates[index].stateTransmitter == StateSubChannel.IDLE){
+            this.transmitterTurnToNAV(index);
+            this.endEventTimeTransmitterNAV = Simulator.getCurTime()+duration;
+            this.endEventUidTransmitterNAV = Simulator.addEvent(duration, new IF_Event() {
+                @Override
+                public void run() {
+                    endEventTransmitterNAV();
+                }
+            });
+        }
     }
 
     //统一状态转移接口
