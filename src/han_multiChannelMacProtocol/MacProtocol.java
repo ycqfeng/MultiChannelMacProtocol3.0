@@ -12,7 +12,8 @@ public class MacProtocol implements IF_Simulator, IF_HprintNode{
     private int uid;
     private PacketQueue queue;//待发Packet队列
     protected MPChannel mpChannel;
-    private MPSendPacket mpSendPacket;
+    protected MPSendPacket mpSendPacket;
+    protected MPReceivePacket mpReceivePacket;
 
     /**
      * 构造函数
@@ -22,6 +23,7 @@ public class MacProtocol implements IF_Simulator, IF_HprintNode{
         this.queue = new PacketQueue();
         this.mpChannel = new MPChannel(this);
         this.mpSendPacket = new MPSendPacket(this);
+        this.mpReceivePacket = new MPReceivePacket(this);
         Simulator.register(this);
         Hprint.register(this);
     }
@@ -85,6 +87,7 @@ public class MacProtocol implements IF_Simulator, IF_HprintNode{
     public void setChannel(Channel channel){
         mpChannel.setChannel(channel);
         mpSendPacket.setChannel(channel);
+        mpReceivePacket.setChannel(channel);
     }
 
     boolean isSendable(int uidSubChannel){
@@ -123,18 +126,115 @@ public class MacProtocol implements IF_Simulator, IF_HprintNode{
         Simulator.start();
     }
     public void text(){
+        //mpReceivePacket.test();
         mpSendPacket.test();
     }
 }
 class MPReceivePacket implements IF_HprintNode{
     private MacProtocol selfMacProtocol;
     private MPReceivePacket self;
+
+    private int[] subChannelUids;//子信道uid
+    ReceivePacketEvent[] receivePacketEvent;
+
     public MPReceivePacket(MacProtocol macProtocol){
+        Hprint.register(this);
         this.selfMacProtocol = macProtocol;
         this.self = this;
     }
-    public void receive(int subChannelUid, Packet packet){
+    public void test(){
+        Packet packet = new Packet(300, PacketType.DATA);
+        PacketRTS rts = new PacketRTS(100, 1000);
+        receive(0, rts);
 
+    }
+    /**
+     * 设置信道
+     * @param channel 信道
+     */
+    public void setChannel(Channel channel){
+        this.subChannelUids = new int[channel.getSumSubChannel()];
+        this.receivePacketEvent = new ReceivePacketEvent[channel.getSumSubChannel()];
+        channel.writeSubChannelUid(this.subChannelUids);
+    }
+
+    /**
+     * 接收
+     * @param subChannelUid 所在信道
+     * @param packet 包
+     */
+    public void receive(int subChannelUid, Packet packet){
+        int index = getIndexSubChannel(subChannelUid);
+        IF_Event beginEvent = new IF_Event() {
+            @Override
+            public void run() {
+
+            }
+        };
+        IF_Event endEvent = new IF_Event() {
+            @Override
+            public void run() {
+                if (receivePacketEvent[index].isCollision()){
+                    System.out.println("发生碰撞");
+                }
+                else {
+                    switch (packet.getPacketType()){
+                        case RTS:
+                            receiveRTS(subChannelUid, packet);
+                            break;
+                    }
+                }
+                receivePacketEvent[index] = null;
+            }
+        };
+        this.receivePacketEvent[index] = new ReceivePacketEvent(subChannelUid, packet, beginEvent, endEvent);
+    }
+
+    private void receiveRTS(int subChannelUid, Packet packet){
+        final PacketRTS rts;
+        if (packet.getPacketType() == PacketType.RTS){
+            rts = (PacketRTS)packet;
+        }
+        else {
+            String error = "传入的Packet不是RTS包";
+            Hprint.printlntErrorInfo(self, error);
+            return;
+        }
+        if (rts.getDestinationUid() != selfMacProtocol.getUid()){
+            //目标不是自己
+            return;
+        }
+        //执行相应动作
+        Simulator.addEvent(TimeUnitValue.ps, new IF_Event() {
+            @Override
+            public void run() {
+                selfMacProtocol.mpSendPacket.sendCTS(subChannelUid, rts.getSourceUid(), rts.getLengthData());
+            }
+        });
+
+    }
+
+    /**
+     * 获取对应子信道的uid
+     * @param index 序号
+     * @return 子信道的uid
+     */
+    public int getSubChannelUid(int index){
+        return this.subChannelUids[index];
+    }
+
+    /**
+     * 获取对应uid子信道的index
+     * @param uid 子信道的uid
+     * @return index
+     */
+    public int getIndexSubChannel(int uid){
+        for (int i = 0 ; i < subChannelUids.length ; i++){
+            if (subChannelUids[i] == uid){
+                return i;
+            }
+        }
+        return -1;
     }
     /**
      * 获取位置字符串
@@ -144,32 +244,59 @@ class MPReceivePacket implements IF_HprintNode{
     public String getStringPosition() {
         return selfMacProtocol.getStringUid()+"/MPSendPacket# ";
     }
-    class ReceivePacket{
+    class ReceivePacketEvent{
         IF_Event beginEvent;
         IF_Event endEvent;
         int subChannelUid;
         Packet packet;
-        public ReceivePacket(int subChannelUid, Packet packet, IF_Event beginEvent, IF_Event endEvent){
+        boolean isCollision;
+        public ReceivePacketEvent(int subChannelUid, Packet packet, IF_Event beginEvent, IF_Event endEvent){
             this.subChannelUid = subChannelUid;
             this.packet = packet;
             this.beginEvent = beginEvent;
             this.endEvent = endEvent;
+            this.isCollision = false;
             Simulator.addEvent(0, new ReceivePacketBegin());
             double t = SubChannel.getSubChannel(subChannelUid).getTransTime(packet);
             selfMacProtocol.mpChannel.turnToREVEIVE(subChannelUid, t);
+        }
+        public boolean isCollision(){
+            return isCollision;
         }
         class ReceivePacketBegin implements IF_Event{
             @Override
             public void run() {
                 double t = SubChannel.getSubChannel(subChannelUid).getTransTime(packet);
+                String str = "begin receive "+packet.getStringDetailUid()+" on ";
+                str += SubChannel.getSubChannel(subChannelUid).getStringUid();
+                Hprint.printlntDebugInfo(self, str);
                 Simulator.addEvent(t, new ReceivePacketEnd());
+                if (beginEvent != null){
+                    beginEvent.run();
+                }
 
             }
         }
         class ReceivePacketEnd implements IF_Event{
             @Override
             public void run() {
-
+                String str = "finish receive "+packet.getStringDetailUid()+" on ";
+                str += SubChannel.getSubChannel(subChannelUid).getStringUid();
+                Hprint.printlntDebugInfo(self, str);
+                isCollision = selfMacProtocol.mpChannel.isReceiveCollision(subChannelUid);
+                if (isCollision){
+                    str = packet.getStringUid()+" come into collision on ";
+                    str += SubChannel.getSubChannel(subChannelUid).getStringUid();
+                    Hprint.printlntDebugInfo(self, str);
+                }
+                else {
+                    str = packet.getStringUid()+" is received successfully on ";
+                    str += SubChannel.getSubChannel(subChannelUid).getStringUid();
+                    Hprint.printlntDebugInfo(self, str);
+                }
+                if (endEvent != null){
+                    endEvent.run();
+                }
             }
         }
     }
@@ -671,11 +798,12 @@ class MPSendPacket implements IF_HprintNode{
                     }
                     //未被中断,开始发送RTS
                     else {
+                        double timeRetransWatch = rtsReTransTimeLimit+SubChannel.getSubChannel(subChannelUid).getTransTime(rts);
                         //设置重传监控
                         if (rtsReTransLimit > 0){//rtsReTransLimit>0启用重传机制
                             if (rtsReTrans[index]++ < rtsReTransLimit){
                                 //到时间，需要重传
-                                rtsReTransEventUid[index] = Simulator.addEvent(rtsReTransTimeLimit,
+                                rtsReTransEventUid[index] = Simulator.addEvent(timeRetransWatch,
                                         new IF_Event() {
                                             @Override
                                             public void run() {
@@ -689,7 +817,7 @@ class MPSendPacket implements IF_HprintNode{
                             }
                             else {
                                 //到时间，不需要重传，需要善后
-                                rtsReTransEventUid[index] = Simulator.addEvent(rtsReTransTimeLimit,
+                                rtsReTransEventUid[index] = Simulator.addEvent(timeRetransWatch,
                                         new IF_Event() {
                                             @Override
                                             public void run() {
@@ -698,26 +826,34 @@ class MPSendPacket implements IF_HprintNode{
                                                 Hprint.printlntDebugInfo(self,str);
                                                 rtsReTrans[index] = 0;
                                                 rtsReTransEventUid[index] = -1;
+                                                deleteDIFS(index);
                                                 //此处不完善，需要处理被丢弃的数据包dataPacket
                                             }
                                         });
                             }
                         }
                         else {//rtsReTransLimit=0 不启用重传机制
-                            rtsReTransEventUid[index] = Simulator.addEvent(rtsReTransTimeLimit,
+                            rtsReTransEventUid[index] = Simulator.addEvent(timeRetransWatch,
                                     new IF_Event() {
                                         @Override
                                         public void run() {
                                             String str = getStringPosition();
                                             str += "未收到CTS，丢弃数据包"+dataPacket.getStringUid();
                                             Hprint.printlntDebugInfo(self,str);
+                                            deleteDIFS(index);
                                             //此处不完善，需要处理被丢弃的数据包dataPacket
                                         }
                                     });
                         }
 
                         //开始RTS包
-                        SendPacket sendPacket = new SendPacket(getSubChannelUid(index), rts, null, null);
+                        IF_Event endSendPacketEvent = new IF_Event() {
+                            @Override
+                            public void run() {
+                                selfMacProtocol.mpChannel.turnToNAV(subChannelUid, rtsReTransTimeLimit);
+                            }
+                        };
+                        SendPacket sendPacket = new SendPacket(getSubChannelUid(index), rts, null, endSendPacketEvent);
                     }
                 }
             };
