@@ -126,7 +126,58 @@ public class MacProtocol implements IF_Simulator, IF_HprintNode{
         mpSendPacket.test();
     }
 }
+class MPReceivePacket implements IF_HprintNode{
+    private MacProtocol selfMacProtocol;
+    private MPReceivePacket self;
+    public MPReceivePacket(MacProtocol macProtocol){
+        this.selfMacProtocol = macProtocol;
+        this.self = this;
+    }
+    public void receive(int subChannelUid, Packet packet){
 
+    }
+    /**
+     * 获取位置字符串
+     * @return 字符串
+     */
+    @Override
+    public String getStringPosition() {
+        return selfMacProtocol.getStringUid()+"/MPSendPacket# ";
+    }
+    class ReceivePacket{
+        IF_Event beginEvent;
+        IF_Event endEvent;
+        int subChannelUid;
+        Packet packet;
+        public ReceivePacket(int subChannelUid, Packet packet, IF_Event beginEvent, IF_Event endEvent){
+            this.subChannelUid = subChannelUid;
+            this.packet = packet;
+            this.beginEvent = beginEvent;
+            this.endEvent = endEvent;
+            Simulator.addEvent(0, new ReceivePacketBegin());
+            double t = SubChannel.getSubChannel(subChannelUid).getTransTime(packet);
+            selfMacProtocol.mpChannel.turnToREVEIVE(subChannelUid, t);
+        }
+        class ReceivePacketBegin implements IF_Event{
+            @Override
+            public void run() {
+                double t = SubChannel.getSubChannel(subChannelUid).getTransTime(packet);
+                Simulator.addEvent(t, new ReceivePacketEnd());
+
+            }
+        }
+        class ReceivePacketEnd implements IF_Event{
+            @Override
+            public void run() {
+
+            }
+        }
+    }
+
+}
+/**
+ * 信道状态记录
+ */
 class MPChannel implements IF_HprintNode{
     private MacProtocol selfMacProtocol;//协议自身
     private Channel channel;//信道
@@ -479,6 +530,10 @@ class MPChannel implements IF_HprintNode{
         private double endEventTimeTransmitterNAV = -1;//NAV状态结束时间
     }
 }
+
+/**
+ * 发送数据包
+ */
 class MPSendPacket implements IF_HprintNode{
     private MacProtocol selfMacProtocol;
     private MPSendPacket self;
@@ -509,13 +564,13 @@ class MPSendPacket implements IF_HprintNode{
         Simulator.addEvent(0.5, new IF_Event() {
             @Override
             public void run() {
-                sendCTS(0, 1, 1000);
+                sendRTS(0,1);
             }
         });
         Simulator.addEvent(0.6, new IF_Event() {
             @Override
             public void run() {
-                sendCTS(0, 1, 1000);
+                sendRTS(0,1);
             }
         });
 
@@ -594,13 +649,13 @@ class MPSendPacket implements IF_HprintNode{
                 @Override
                 public void run() {
                     Hprint.printlntDebugInfo(self, "DIFS结束");
-                    deleteDIFS(index);
                     //被中断
                     if (difss[index].isDisturb){
                         if (difsReTryRTS[index]++ < difsReTryRTSLimit){
                             String str = getStringPosition();
                             str += "DIFS未成功，第"+difsReTryRTS+"次重试";
                             Hprint.printlntDebugInfo(self, str);
+                            deleteDIFS(index);
                             sendRTS(subChannelUid, destinationUid);
                             return;
                         }
@@ -609,7 +664,7 @@ class MPSendPacket implements IF_HprintNode{
                             String str = getStringPosition();
                             str += "DIFS连续"+difsReTryRTSLimit+"次失败，发送RTS失败，丢弃正在发送的数据包";
                             Hprint.printlntDebugInfo(self, str);
-                            difss[index] = null;
+                            deleteDIFS(index);
                             //丢弃数据包
                         }
 
@@ -674,6 +729,47 @@ class MPSendPacket implements IF_HprintNode{
         /**
          * 这里缺少判断是否能够发送的条件，需要补充
          */
+        int index = getIndexSubChannel(subChannelUid);
+        if (!selfMacProtocol.isSendable(subChannelUid)){
+            //若处于NAV状态，等待NAV结束
+            if (selfMacProtocol.getTransmitterState(subChannelUid) == StateSubChannel.NAV){
+                String str = getStringPosition();
+                str += "处于NAV状态，CTS需要退避";
+                Hprint.printlntDebugInfo(this, str);
+                Simulator.addEvent(selfMacProtocol.getEndTimeNAV(subChannelUid) - Simulator.getCurTime()+TimeUnitValue.ps,
+                        new IF_Event() {
+                            @Override
+                            public void run() {
+                                sendCTS(subChannelUid, destinationUid, dataPacketLength);
+                            }
+                        });
+                return;
+            }
+            //若不处于NAV状态，则退避
+            else {
+                if (this.backoffTime[index]++ < this.backoffTimeLimit){
+                    String str = "发送CTS时，"+SubChannel.getSubChannel(subChannelUid).getStringUid();
+                    str += "被占用，执行第"+this.backoffTime[index]+"次退避";
+                    Hprint.printlntDebugInfo(this, str);
+                    Simulator.addEvent(this.backOffs[index].getBackOffTime(),
+                            new IF_Event() {
+                                @Override
+                                public void run() {
+                                    sendCTS(subChannelUid, destinationUid, dataPacketLength);
+                                }
+                            });
+                    return;
+                }
+                else {
+                    String str = "在"+SubChannel.getSubChannel(subChannelUid).getStringUid();
+                    str += "发送CTS到达退避上限，发送失败";
+                    Hprint.printlntDebugInfo(this, str);
+                    this.backoffTime[index] = 0;
+                    return;
+                }
+            }
+        }
+        //开始发送CTS
         PacketCTS cts = new PacketCTS(lengthCTS, dataPacketLength);
         cts.setSourceUid(selfMacProtocol.getUid());
         cts.setDestinationUid(destinationUid);
