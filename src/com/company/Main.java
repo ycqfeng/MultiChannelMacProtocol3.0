@@ -17,8 +17,10 @@ public class Main {
         channel.setSubChannelNum(10);
 
         MacProtocol source = new MacProtocol();
+        MacProtocol source2 = new MacProtocol();
         MacProtocol destination = new MacProtocol();
         source.setChannel(channel);
+        source2.setChannel(channel);
         destination.setChannel(channel);
 
         Packet packet = new Packet(200);
@@ -26,6 +28,8 @@ public class Main {
 
         source.enQueue(packet);
         source.enQueue(packet);
+        source2.enQueue(packet);
+        source2.enQueue(packet);
 
         Simulator.start();
     }
