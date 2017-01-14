@@ -16,10 +16,16 @@ public class Main {
         Channel channel = new Channel();
         channel.setSubChannelNum(10);
 
-        MacProtocol macProtocol = new MacProtocol();
-        macProtocol.setChannel(channel);
+        MacProtocol source = new MacProtocol();
+        MacProtocol destination = new MacProtocol();
+        source.setChannel(channel);
+        destination.setChannel(channel);
 
-        macProtocol.enQueue(new Packet(300, PacketType.DATA));
+        Packet packet = new Packet(200);
+        packet.setDestinationUid(destination.getUid());
+
+        source.enQueue(packet);
+        source.enQueue(packet);
 
         Simulator.start();
     }

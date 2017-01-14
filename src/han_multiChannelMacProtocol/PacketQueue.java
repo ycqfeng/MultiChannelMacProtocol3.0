@@ -11,8 +11,8 @@ public class PacketQueue {
 
     //获取队列情况
     public String getStringPacketQueueState(){
-        String str = "Queue[";
-        str += this.length+"Packet]";
+        String str = "Queue{";
+        str += this.length+" Packet}";
         return str;
     }
     public void setMaxLength(int maxLength){

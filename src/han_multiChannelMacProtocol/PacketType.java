@@ -8,5 +8,6 @@ public enum PacketType {
     DATA,
     RTS,
     CTS,
+    ACK,
     OTHER
 }

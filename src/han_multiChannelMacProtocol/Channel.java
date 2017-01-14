@@ -20,6 +20,12 @@ public class Channel implements IF_Simulator, IF_HprintNode{
         }
     }
 
+    public void attachTo(IF_Channel device){
+        for (int i = 0 ; i < subChannels.length ; i++){
+            SubChannel.addDeviceInterface(subChannels[i].getUid(), device);
+        }
+    }
+
     public int getSumSubChannel(){
         return subChannels.length;
     }

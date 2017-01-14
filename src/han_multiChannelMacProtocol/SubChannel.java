@@ -1,7 +1,6 @@
 package han_multiChannelMacProtocol;
 
-import han_simulator.IF_HprintNode;
-import han_simulator.IF_Simulator;
+import han_simulator.*;
 
 /**
  * Created by ycqfeng on 2017/1/11.
@@ -12,19 +11,29 @@ public class SubChannel implements IF_Simulator, IF_HprintNode{
     private int uid;
 
     private Channel channel;
+    private IF_Channel[] devices;
 
     private double bps = 1000;
 
     public SubChannel(Channel channel){
+        Hprint.register(this);
         this.uid = uidBase++;
         this.channel = channel;
         addSubChannel(this);
-
     }
 
     public double send(Packet packet){
+        String str = "发送"+packet.getStringDetailUid();
+        Hprint.printlntDebugInfo(this,str);
+        Simulator.addEvent(0, new IF_Event() {
+            @Override
+            public void run() {
+                for (int i = 0 ; i < devices.length ; i++){
+                    devices[i].receive(getUid(), packet);
+                }
+            }
+        });
         return packet.getLength()/bps;
-
     }
 
     public double getTransTime(Packet packet){
@@ -69,5 +78,23 @@ public class SubChannel implements IF_Simulator, IF_HprintNode{
             }
         }
         return null;
+    }
+    public static void addDeviceInterface(int subChannelUid, IF_Channel device){
+        SubChannel subChannel = getSubChannel(subChannelUid);
+        if (subChannel.devices == null){
+            subChannel.devices = new IF_Channel[1];
+            subChannel.devices[0] = device;
+        }
+        else {
+            for (int i = 0 ; i < subChannel.devices.length ; i++){
+                if (subChannel.devices[i] == device){
+                    return;
+                }
+            }
+            IF_Channel[] temp = new IF_Channel[subChannel.devices.length+1];
+            System.arraycopy(subChannel.devices, 0, temp, 0, subChannel.devices.length);
+            temp[subChannel.devices.length] = device;
+            subChannel.devices = temp;
+        }
     }
 }

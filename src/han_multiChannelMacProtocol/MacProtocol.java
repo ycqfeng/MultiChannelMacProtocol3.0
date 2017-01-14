@@ -8,12 +8,12 @@ import han_simulator.*;
  * 信道选择目前一点没有做呢。
  * Created by ycqfeng on 2017/1/11.
  */
-public class MacProtocol implements IF_Simulator, IF_HprintNode{
+public class MacProtocol implements IF_Simulator, IF_HprintNode, IF_Channel{
     //静态参数
     private static int uidBase = 0;
     //私有参数
     private int uid;
-    private PacketQueue queue;//待发Packet队列
+    protected PacketQueue queue;//待发Packet队列
     protected MPChannel mpChannel;
     protected MPSendPacket mpSendPacket;
     protected MPReceivePacket mpReceivePacket;
@@ -41,6 +41,11 @@ public class MacProtocol implements IF_Simulator, IF_HprintNode{
         if (queue.pushPacket(packet)){
             str += "加入队列成功";
             Hprint.printlntDebugInfo(this, str);
+            if (!this.queue.isEmpty()){
+                if (this.mpSendPacket.isSendable()) {
+                    this.mpSendPacket.addDataPacket(this.queue.popPacket());
+                }
+            }
             return true;
         }
         else {
@@ -48,8 +53,11 @@ public class MacProtocol implements IF_Simulator, IF_HprintNode{
             Hprint.printlntDebugInfo(this, str);
             return false;
         }
+
+
     }
 
+    @Override
     public void receive(int subChannelUid, Packet packet){
         this.mpReceivePacket.receive(subChannelUid, packet);
     }
@@ -92,6 +100,7 @@ public class MacProtocol implements IF_Simulator, IF_HprintNode{
      * @param channel 信道
      */
     public void setChannel(Channel channel){
+        channel.attachTo(this);
         mpChannel.setChannel(channel);
         mpSendPacket.setChannel(channel);
         mpReceivePacket.setChannel(channel);
@@ -147,6 +156,7 @@ class MPReceivePacket implements IF_HprintNode{
     private ReceivePacketEvent[] receivePacketEvent;//接收Packet事件
     private int[] waitForCTSFromUid;//等待的CTS
     private int[] waitForDATAFromUid;//等待的DATA
+    private int[] waitForACKFromUid;//等待的ACK
 
     public MPReceivePacket(MacProtocol macProtocol){
         Hprint.register(this);
@@ -167,10 +177,12 @@ class MPReceivePacket implements IF_HprintNode{
         this.receivePacketEvent = new ReceivePacketEvent[channel.getSumSubChannel()];
         this.waitForCTSFromUid = new int[channel.getSumSubChannel()];
         this.waitForDATAFromUid = new int[channel.getSumSubChannel()];
+        this.waitForACKFromUid = new int [channel.getSumSubChannel()];
         channel.writeSubChannelUid(this.subChannelUids);
         for (int i = 0 ; i < channel.getSumSubChannel() ; i++){
             this.waitForCTSFromUid[i] = -1;
             this.waitForDATAFromUid[i] = -1;
+            this.waitForACKFromUid[i] = -1;
         }
     }
 
@@ -202,6 +214,20 @@ class MPReceivePacket implements IF_HprintNode{
         Hprint.printlntDebugInfo(self, str);
         this.waitForDATAFromUid[index] = -1;
     }
+    public void setWaitForACKFromUid(int subChannelUid, int destinationUid){
+        String str = "wait for ACK Packet from MacProtocol("+destinationUid+") on";
+        str += "SubChannel("+subChannelUid+")";
+        Hprint.printlntDebugInfo(self, str);
+        int index = getIndexSubChannel(subChannelUid);
+        this.waitForACKFromUid[index] = destinationUid;
+    }
+    public void deleteWaitForACKFromUid(int subChannelUid){
+        int index = getIndexSubChannel(subChannelUid);
+        String str = "finish waiting for ACK Packet form MacProtocol("+this.waitForDATAFromUid[index]+") on";
+        str += "SubChannel("+subChannelUid+")";
+        Hprint.printlntDebugInfo(self, str);
+        this.waitForACKFromUid[index] = -1;
+    }
 
     /**
      * 接收
@@ -210,6 +236,9 @@ class MPReceivePacket implements IF_HprintNode{
      */
     public void receive(int subChannelUid, Packet packet){
         int index = getIndexSubChannel(subChannelUid);
+        if (packet.getSourceUid() == selfMacProtocol.getUid()){
+            return;
+        }
         IF_Event beginEvent = new IF_Event() {
             @Override
             public void run() {
@@ -233,6 +262,9 @@ class MPReceivePacket implements IF_HprintNode{
                         case DATA:
                             receiveDATA(subChannelUid, packet);
                             break;
+                        case ACK:
+                            receiveACK(subChannelUid, packet);
+                            break;
                     }
                 }
                 receivePacketEvent[index] = null;
@@ -241,6 +273,44 @@ class MPReceivePacket implements IF_HprintNode{
         this.receivePacketEvent[index] = new ReceivePacketEvent(subChannelUid, packet, beginEvent, endEvent);
     }
 
+    private void receiveACK(int subChannelUid, Packet packet){
+        final PacketACK ack;
+        int index = getIndexSubChannel(subChannelUid);
+        if (packet.getPacketType() == PacketType.ACK){
+            ack = (PacketACK) packet;
+        }
+        else {
+            String error = "传入的Packet不是ACK包";
+            Hprint.printlntErrorInfo(self, error);
+            return;
+        }
+        if (ack.getDestinationUid() != selfMacProtocol.getUid()){
+            //目标不是自己
+            return;
+        }
+        else if (this.waitForACKFromUid[index] == -1){
+            String str = "未等待ACK,忽略"+ack.getStringDetailUid();
+            Hprint.printlntDebugInfo(self, str);
+            //没有等待DATA
+            return;
+        }
+        //执行相应动作
+        selfMacProtocol.mpSendPacket.deleteDATAReTransEvent(index);
+        selfMacProtocol.mpChannel.deleteEndEventTransmitterNAV(subChannelUid);
+        //System.out.println("成功收到ACK，并执行相应动作");
+        Simulator.addEvent(TimeUnitValue.ps, new IF_Event() {
+            @Override
+            public void run() {
+                selfMacProtocol.mpSendPacket.finishSendDataPacket();
+            }
+        });
+    }
+
+    /**
+     * 收到DATA
+     * @param subChannelUid 信道
+     * @param packet 数据包
+     */
     private void receiveDATA(int subChannelUid, Packet packet){
         final PacketDATA data;
         int index = getIndexSubChannel(subChannelUid);
@@ -266,6 +336,13 @@ class MPReceivePacket implements IF_HprintNode{
         deleteWaitForDATAFromUid(index);
         selfMacProtocol.mpChannel.deleteEndEventTransmitterNAV(subChannelUid);
         System.out.println("成功收到DATA，并执行相应动作");
+        //
+        Simulator.addEvent(TimeUnitValue.ps, new IF_Event() {
+            @Override
+            public void run() {
+                selfMacProtocol.mpSendPacket.sendACK(subChannelUid, data.getSourceUid());
+            }
+        });
     }
     /**
      * 收到CTS
@@ -295,8 +372,15 @@ class MPReceivePacket implements IF_HprintNode{
         }
         //执行相应动作
         selfMacProtocol.mpSendPacket.deleteRTSReTransEvent(index);
+        selfMacProtocol.mpReceivePacket.deleteWaitForCTSFromUid(subChannelUid);
         selfMacProtocol.mpChannel.deleteEndEventTransmitterNAV(subChannelUid);
         System.out.println("成功收到CTS，并执行相应动作");
+        Simulator.addEvent(TimeUnitValue.ps, new IF_Event() {
+            @Override
+            public void run() {
+                selfMacProtocol.mpSendPacket.sendDATA(subChannelUid, cts.getSourceUid());
+            }
+        });
     }
 
     /**
@@ -320,7 +404,7 @@ class MPReceivePacket implements IF_HprintNode{
         }
         //执行相应动作
         int index = getIndexSubChannel(subChannelUid);
-        setWaitForDATAFromUid(subChannelUid, rts.getSourceUid());
+        //setWaitForDATAFromUid(subChannelUid, rts.getSourceUid());
         Simulator.addEvent(TimeUnitValue.ps, new IF_Event() {
             @Override
             public void run() {
@@ -614,7 +698,7 @@ class MPChannel implements IF_HprintNode{
         if (Simulator.deleteEvent(this.subChannelStates[index].endEventUidTransmitterNAV)){
             String str = "结束NAV成功";
             Hprint.printlntDebugInfo(this, str);
-
+            endEventTransmitterNAV(index);
         }
         else {
             String str = "结束NAV失败";
@@ -789,8 +873,13 @@ class MPSendPacket implements IF_HprintNode{
     private BackOff[] backOffs;//退避
     private double backoffBaseTime = 0.1;//退避基准时间
     private double timeDIFS = 0.1;
+    private double timeSIFS = 0.1;
+    //ACK参数
+    private int lengthACK = 20*8;//CTS bit数
+    private int[] ACKBackoffTime;//RTS退避次数
+    private int ACKBackoffTimeLimit = 16;//RTS退避次数限制
     //DATA参数
-    private PacketDATA dataPacket = new PacketDATA(300);
+    private PacketDATA dataPacket;
     private int[] DATABackoffTime;//DATA退避次数
     private int DATABackoffTimeLimit = 16;//DATA退避次数限制
     private int[] difsReTryDATA;//DIFS重试次数
@@ -799,11 +888,9 @@ class MPSendPacket implements IF_HprintNode{
     private int[] dataReTrans;//DATA重传次数
     private int dataReTransLimit = 0;//DATA重传次数限制
     private int[] dataReTransEventUid;//DATA重传事件UID
-
+    private double waitForDataTimeLimit = 1;//等待数据包持续时间
     //CTS参数
     private int lengthCTS = 20*8;//CTS bit数
-    private double timeSIFS = 0.1;
-
     //RTS参数
     private int[] RTSBackoffTime;//RTS退避次数
     private int RTSBackoffTimeLimit = 16;//RTS退避次数限制
@@ -814,22 +901,6 @@ class MPSendPacket implements IF_HprintNode{
     private int rtsReTransLimit = 3;//RTS重传次数限制
     private int[] rtsReTransEventUid;//RTS重传事件UID
     private int lengthRTS = 20*8;//RTS bit数
-
-
-    public void test(){
-        Simulator.addEvent(0.5, new IF_Event() {
-            @Override
-            public void run() {
-                sendRTS(0,1);
-            }
-        });
-        Simulator.addEvent(3.5, new IF_Event() {
-            @Override
-            public void run() {
-                deleteRTSReTransEvent(0);
-            }
-        });
-    }
 
     public MPSendPacket(MacProtocol macProtocol){
         Hprint.register(this);
@@ -853,7 +924,21 @@ class MPSendPacket implements IF_HprintNode{
      * @param packet 数据包
      */
     public void addDataPacket(Packet packet){
+        String str = "加入一个新数据包将被发送";
+        Hprint.printlntDebugInfo(this,str);
         this.dataPacket = new PacketDATA(packet);
+        this.dataPacket.setSourceUid(this.selfMacProtocol.getUid());
+        this.dataPacket.setDestinationUid(packet.destinationUid);
+        this.sendRTS(0, dataPacket.getDestinationUid());
+    }
+
+    public void finishSendDataPacket(){
+        String str = "完成发送一个数据包";
+        Hprint.printlntDebugInfo(this, str);
+        this.dataPacket = null;
+        if (!selfMacProtocol.queue.isEmpty()){
+            addDataPacket(selfMacProtocol.queue.popPacket());
+        }
     }
 
     /**
@@ -923,11 +1008,12 @@ class MPSendPacket implements IF_HprintNode{
                     Hprint.printlntDebugInfo(self, "DIFS结束");
                     //被中断
                     if (difss[index].isDisturb){
+                        deleteDIFS(index);
                         if (difsReTryRTS[index]++ < difsReTryRTSLimit){
                             String str = getStringPosition();
                             str += "DIFS未成功，第"+difsReTryRTS+"次重试";
                             Hprint.printlntDebugInfo(self, str);
-                            deleteDIFS(index);
+                            deleteDIFS(index);//被中断，删除DIFS重来
                             sendRTS(subChannelUid, destinationUid);
                             return;
                         }
@@ -936,13 +1022,14 @@ class MPSendPacket implements IF_HprintNode{
                             String str = getStringPosition();
                             str += "DIFS连续"+difsReTryRTSLimit+"次失败，发送RTS失败，丢弃正在发送的数据包";
                             Hprint.printlntDebugInfo(self, str);
-                            deleteDIFS(index);
+                            deleteDIFS(index);//重试失败，删除
                             //丢弃数据包
                         }
 
                     }
                     //未被中断,开始发送RTS
                     else {
+                        deleteDIFS(index);
                         double timeRetransWatch = rtsReTransTimeLimit+SubChannel.getSubChannel(subChannelUid).getTransTime(rts);
                         //设置重传监控
                         if (rtsReTransLimit > 0){//rtsReTransLimit>0启用重传机制
@@ -1019,9 +1106,6 @@ class MPSendPacket implements IF_HprintNode{
      * @param dataPacketLength 数据包长度确认
      */
     public void sendCTS(int subChannelUid, int destinationUid, int dataPacketLength){
-        /**
-         * 这里缺少判断是否能够发送的条件，需要补充
-         */
         int index = getIndexSubChannel(subChannelUid);
         if (!selfMacProtocol.isSendable(subChannelUid)){
             //若处于NAV状态，等待NAV结束
@@ -1084,12 +1168,24 @@ class MPSendPacket implements IF_HprintNode{
                         selfMacProtocol.mpReceivePacket.setWaitForDATAFromUid(subChannelUid, destinationUid);
                     }
                 };*/
-                IF_Event waitForDataEvent = null;
+                IF_Event waitForDataEvent = new IF_Event() {
+                    @Override
+                    public void run() {
+                        selfMacProtocol.mpChannel.turnToNAV(subChannelUid, waitForDataTimeLimit);
+                        selfMacProtocol.mpReceivePacket.setWaitForDATAFromUid(subChannelUid, destinationUid);
+                    }
+                };
                 SendPacket sendPacket = new SendPacket(subChannelUid, cts, null, waitForDataEvent);
             }
         };
         addSIFS(subChannelUid, timeSIFS, SIFSBeginEvent, SIFSEndEvent);
     }
+
+    /**
+     * 发送数据
+     * @param subChannelUid 子信道
+     * @param destinationUid 目标
+     */
     public void sendDATA(int subChannelUid, int destinationUid){
         //若不可发送
         int index = getIndexSubChannel(subChannelUid);
@@ -1135,100 +1231,143 @@ class MPSendPacket implements IF_HprintNode{
         //若可发送
         else {
             this.DATABackoffTime[index] = 0;
-            IF_Event DIFSbeginEvent = new IF_Event() {
+            IF_Event SIFSbeginEvent = new IF_Event() {
                 @Override
                 public void run() {
-                    Hprint.printlntDebugInfo(self, "DIFS开始");
+                    Hprint.printlntDebugInfo(self, "SIFS开始");
                 }
             };
-            IF_Event DIFSendEvent = new IF_Event() {
+            IF_Event SIFSendEvent = new IF_Event() {
                 @Override
                 public void run() {
-                    Hprint.printlntDebugInfo(self, "DIFS结束");
-                    //被中断
-                    if (difss[index].isDisturb){
-                        if (difsReTryDATA[index]++ < difsReTryDATALimit){
-                            String str = "DIFS未成功，第"+difsReTryDATA+"次重试";
-                            Hprint.printlntDebugInfo(self, str);
-                            deleteDIFS(index);
-                            sendDATA(subChannelUid, destinationUid);
-                            return;
-                        }
-                        else {
-                            difsReTryDATA[index] = 0;
-                            String str = "DIFS连续"+difsReTryDATALimit+"次失败，发送DATA失败，丢弃正在发送的数据包";
-                            Hprint.printlntDebugInfo(self, str);
-                            deleteDIFS(index);
-                            //丢弃数据包
-                        }
-
-                    }
-                    //未被中断,开始发送DATA
-                    else {
-                        double timeRetransWatch = dataReTransTimeLimit+SubChannel.getSubChannel(subChannelUid).getTransTime(dataPacket);
-                        //设置重传监控
-                        if (dataReTransLimit > 0){//dataReTransLimit>0启用重传机制
-                            if (dataReTrans[index]++ < dataReTransLimit){
-                                //到时间，需要重传
-                                dataReTransEventUid[index] = Simulator.addEvent(timeRetransWatch,
-                                        new IF_Event() {
-                                            @Override
-                                            public void run() {
-                                                String str = "启动第"+dataReTrans[index]+"次DATA重传";
-                                                Hprint.printlntDebugInfo(self, str);
-                                                deleteDIFS(index);
-                                                //selfMacProtocol.mpReceivePacket.deleteWaitForCTSFromUid(subChannelUid);
-                                                sendDATA(subChannelUid, destinationUid);
-                                            }
-                                        });
-
-                            }
-                            else {
-                                //到时间，不需要重传，需要善后
-                                dataReTransEventUid[index] = Simulator.addEvent(timeRetransWatch,
-                                        new IF_Event() {
-                                            @Override
-                                            public void run() {
-                                                String str = "重传失败，丢弃"+dataPacket.getStringUid();
-                                                Hprint.printlntDebugInfo(self,str);
-                                                dataReTrans[index] = 0;
-                                                dataReTransEventUid[index] = -1;
-                                                //selfMacProtocol.mpReceivePacket.deleteWaitForCTSFromUid(subChannelUid);
-                                                deleteDIFS(index);
-                                                //此处不完善，需要处理被丢弃的数据包dataPacket
-                                            }
-                                        });
-                            }
-                        }
-                        else {//dataReTransLimit=0 不启用重传机制
+                    Hprint.printlntDebugInfo(self, "SIFS结束");
+                    deleteSIFS(index);
+                    double timeRetransWatch = dataReTransTimeLimit+SubChannel.getSubChannel(subChannelUid).getTransTime(dataPacket);
+                    //设置重传监控
+                    if (dataReTransLimit > 0){//dataReTransLimit>0启用重传机制
+                        if (dataReTrans[index]++ < dataReTransLimit){
+                            //到时间，需要重传
                             dataReTransEventUid[index] = Simulator.addEvent(timeRetransWatch,
                                     new IF_Event() {
                                         @Override
                                         public void run() {
-                                            String str = "未收到ACK，丢弃数据包"+dataPacket.getStringUid();
+                                            String str = "启动第"+dataReTrans[index]+"次DATA重传";
+                                            Hprint.printlntDebugInfo(self, str);
+                                            deleteDIFS(index);
+                                            selfMacProtocol.mpReceivePacket.deleteWaitForACKFromUid(subChannelUid);
+                                            sendDATA(subChannelUid, destinationUid);
+                                        }
+                                    });
+
+                        }
+                        else {
+                            //到时间，不需要重传，需要善后
+                            dataReTransEventUid[index] = Simulator.addEvent(timeRetransWatch,
+                                    new IF_Event() {
+                                        @Override
+                                        public void run() {
+                                            String str = "重传失败，丢弃"+dataPacket.getStringUid();
                                             Hprint.printlntDebugInfo(self,str);
-                                            //selfMacProtocol.mpReceivePacket.deleteWaitForCTSFromUid(subChannelUid);
+                                            dataReTrans[index] = 0;
+                                            dataReTransEventUid[index] = -1;
+                                            selfMacProtocol.mpReceivePacket.deleteWaitForACKFromUid(subChannelUid);
                                             deleteDIFS(index);
                                             //此处不完善，需要处理被丢弃的数据包dataPacket
                                         }
                                     });
                         }
-
-                        //开始DATA包
-                        IF_Event endSendPacketEvent = new IF_Event() {
-                            @Override
-                            public void run() {
-                                selfMacProtocol.mpChannel.turnToNAV(subChannelUid, dataReTransTimeLimit);
-                                //selfMacProtocol.mpReceivePacket.setWaitForCTSFromUid(subChannelUid, destinationUid);
-                            }
-                        };
-                        SendPacket sendPacket = new SendPacket(getSubChannelUid(index), dataPacket, null, endSendPacketEvent);
                     }
+                    else {//dataReTransLimit=0 不启用重传机制
+                        dataReTransEventUid[index] = Simulator.addEvent(timeRetransWatch,
+                                new IF_Event() {
+                                    @Override
+                                    public void run() {
+                                        String str = "未收到ACK，丢弃数据包"+dataPacket.getStringUid();
+                                        Hprint.printlntDebugInfo(self,str);
+                                        selfMacProtocol.mpReceivePacket.deleteWaitForACKFromUid(subChannelUid);
+                                        deleteDIFS(index);
+                                        //此处不完善，需要处理被丢弃的数据包dataPacket
+                                    }
+                                });
+                    }
+
+                    //开始DATA包
+                    IF_Event endSendPacketEvent = new IF_Event() {
+                        @Override
+                        public void run() {
+                            selfMacProtocol.mpChannel.turnToNAV(subChannelUid, dataReTransTimeLimit);
+                            selfMacProtocol.mpReceivePacket.setWaitForACKFromUid(subChannelUid, destinationUid);
+                            //selfMacProtocol.mpReceivePacket.setWaitForCTSFromUid(subChannelUid, destinationUid);
+                        }
+                    };
+                    SendPacket sendPacket = new SendPacket(getSubChannelUid(index), dataPacket, null, endSendPacketEvent);
                 }
             };
-            addDIFS(index, timeDIFS, DIFSbeginEvent, DIFSendEvent);
+            addSIFS(index, timeDIFS, SIFSbeginEvent, SIFSendEvent);
             return;
         }
+    }
+
+    public void sendACK(int subChannelUid, int destinationUid){
+        int index = getIndexSubChannel(subChannelUid);
+        if (!selfMacProtocol.isSendable(subChannelUid)){
+            //若处于NAV状态，等待NAV结束
+            if (selfMacProtocol.getTransmitterState(subChannelUid) == StateSubChannel.NAV){
+                String str = getStringPosition();
+                str += "处于NAV状态，ACK需要退避";
+                Hprint.printlntDebugInfo(this, str);
+                Simulator.addEvent(selfMacProtocol.getEndTimeNAV(subChannelUid) - Simulator.getCurTime()+TimeUnitValue.ps,
+                        new IF_Event() {
+                            @Override
+                            public void run() {
+                                sendACK(subChannelUid, destinationUid);
+                            }
+                        });
+                return;
+            }
+            //若不处于NAV状态，则退避
+            else {
+                if (this.ACKBackoffTime[index]++ < this.ACKBackoffTimeLimit){
+                    String str = "发送ACK时，"+SubChannel.getSubChannel(subChannelUid).getStringUid();
+                    str += "被占用，执行第"+this.ACKBackoffTime[index]+"次退避";
+                    Hprint.printlntDebugInfo(this, str);
+                    Simulator.addEvent(this.backOffs[index].getBackOffTime(),
+                            new IF_Event() {
+                                @Override
+                                public void run() {
+                                    sendACK(subChannelUid, destinationUid);
+                                }
+                            });
+                    return;
+                }
+                else {
+                    String str = "在"+SubChannel.getSubChannel(subChannelUid).getStringUid();
+                    str += "发送ACK到达退避上限，发送失败";
+                    Hprint.printlntDebugInfo(this, str);
+                    this.ACKBackoffTime[index] = 0;
+                    return;
+                }
+            }
+        }
+        //若可发送
+        PacketACK ack = new PacketACK(lengthACK);
+        ack.setSourceUid(selfMacProtocol.getUid());
+        ack.setDestinationUid(destinationUid);
+        IF_Event SIFSBeginEvent = new IF_Event() {
+            @Override
+            public void run() {
+                Hprint.printlntDebugInfo(self, "SIFS开始");
+            }
+        };
+        IF_Event SIFSEndEvent = new IF_Event() {
+            @Override
+            public void run() {
+                Hprint.printlntDebugInfo(self, "SIFS结束");
+                deleteSIFS(getIndexSubChannel(subChannelUid));
+                SendPacket sendPacket = new SendPacket(subChannelUid, ack, null, null);
+            }
+        };
+        addSIFS(subChannelUid, timeSIFS, SIFSBeginEvent, SIFSEndEvent);
     }
 
     /**
@@ -1259,8 +1398,11 @@ class MPSendPacket implements IF_HprintNode{
     }
 
     public void deleteRTSReTransEvent(int index){
-        String str = getStringPosition();
-        str += "删除RTS重发"+Simulator.deleteEvent(this.rtsReTransEventUid[index]);
+        String str = "删除RTS重发"+Simulator.deleteEvent(this.rtsReTransEventUid[index]);
+        Hprint.printlntDebugInfo(this, str);
+    }
+    public void deleteDATAReTransEvent(int index){
+        String str = "删除DATA重发"+Simulator.deleteEvent(this.dataReTransEventUid[index]);
         Hprint.printlntDebugInfo(this, str);
     }
     /**

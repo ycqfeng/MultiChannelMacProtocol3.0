@@ -9,6 +9,7 @@ public class Hprint {
     public static Hprint hprint;
 
     private HprintNode[] nodes;
+    private static double time;
     private static DecimalFormat timeFormatilize = new DecimalFormat("0.000000000");
 
     //设置时间显示精度
@@ -31,6 +32,12 @@ public class Hprint {
                 break;
             default:
                 break;
+        }
+    }
+    private static void setCurTime(double t){
+        if (t > time){
+            System.out.println();
+            time = t;
         }
     }
     //设置
@@ -81,6 +88,7 @@ public class Hprint {
         }
         if (hprintNode.isPrintLogicInformation()){
             str = getCurrTime()+hprintNode.getStringPosition()+str+"--(Logic Info)";
+            setCurTime(Simulator.getCurTime());
             System.out.println(str);
             return true;
         }
@@ -96,6 +104,7 @@ public class Hprint {
         }
         if (hprintNode.isPrintDebugInformation()){
             str = getCurrTime()+hprintNode.getStringPosition()+str+"--(Debug Info)";
+            setCurTime(Simulator.getCurTime());
             System.out.println(str);
             return true;
         }
@@ -111,6 +120,7 @@ public class Hprint {
         }
         if (hprintNode.isPrintErrorInformation()){
             str = getCurrTime()+hprintNode.getStringPosition()+str+"--(Error Info)";
+            setCurTime(Simulator.getCurTime());
             System.out.println(str);
             return true;
         }
@@ -120,6 +130,7 @@ public class Hprint {
     }
     public static void printlnt(String str){
         str = getCurrTime() + str;
+        setCurTime(Simulator.getCurTime());
         System.out.println(str);
     }
     //打印不带时间
@@ -132,6 +143,7 @@ public class Hprint {
         if (hprintNode.isPrintLogicInformation()){
             str = hprintNode.getStringPosition()+str;
             str += "--(Logic Info)";
+            setCurTime(Simulator.getCurTime());
             System.out.println(str);
             return true;
         }
@@ -148,6 +160,7 @@ public class Hprint {
         if (hprintNode.isPrintDebugInformation()){
             str = hprintNode.getStringPosition()+str;
             str +="--(Debug Info)";
+            setCurTime(Simulator.getCurTime());
             System.out.println(str);
             return true;
         }
@@ -164,6 +177,7 @@ public class Hprint {
         if (hprintNode.isPrintErrorInformation()){
             str = hprintNode.getStringPosition()+str;
             str +="--(Error Info)";
+            setCurTime(Simulator.getCurTime());
             System.out.println(str);
             return true;
         }
@@ -172,6 +186,7 @@ public class Hprint {
         }
     }
     public static void println(String str){
+        setCurTime(Simulator.getCurTime());
         System.out.println(str);
     }
 
