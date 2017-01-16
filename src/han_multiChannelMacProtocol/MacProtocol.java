@@ -267,7 +267,7 @@ class MPReceivePacket implements IF_HprintNode{
                             break;
                     }
                 }
-                receivePacketEvent[index] = null;
+                //receivePacketEvent[index] = null;
             }
         };
         this.receivePacketEvent[index] = new ReceivePacketEvent(subChannelUid, packet, beginEvent, endEvent);
@@ -466,8 +466,8 @@ class MPReceivePacket implements IF_HprintNode{
             @Override
             public void run() {
                 double t = SubChannel.getSubChannel(subChannelUid).getTransTime(packet);
-                String str = "begin receive "+packet.getStringDetailUid()+" on ";
-                str += SubChannel.getSubChannel(subChannelUid).getStringUid();
+                String str = "开始在 "+SubChannel.getSubChannel(subChannelUid).getStringUid();
+                str += "上接收"+packet.getStringDetailUid();
                 Hprint.printlntDebugInfo(self, str);
                 Simulator.addEvent(t, new ReceivePacketEnd());
                 if (beginEvent != null){
@@ -479,8 +479,8 @@ class MPReceivePacket implements IF_HprintNode{
         class ReceivePacketEnd implements IF_Event{
             @Override
             public void run() {
-                String str = "finish receive "+packet.getStringDetailUid()+" on ";
-                str += SubChannel.getSubChannel(subChannelUid).getStringUid();
+                String str = "完成在 "+SubChannel.getSubChannel(subChannelUid).getStringUid();
+                str += "上接收"+packet.getStringDetailUid();
                 Hprint.printlntDebugInfo(self, str);
                 isCollision = selfMacProtocol.mpChannel.isReceiveCollision(subChannelUid);
                 if (isCollision){
@@ -663,7 +663,7 @@ class MPChannel implements IF_HprintNode{
     //统一结束状态
     private void endEventTransmitterNAV(int index){
         String str = getStringSubChannel(subChannelUids[index]);
-        str += " Transmitter State: ";
+        str += " 发送机状态: ";
         str += "NAV is ending";
         Hprint.printlntDebugInfo(this ,str);
         transmitterTurnToIDLE(index);
@@ -671,7 +671,7 @@ class MPChannel implements IF_HprintNode{
     }
     private void endEventTransmitterSEND(int index){
         String str = getStringSubChannel(subChannelUids[index]);
-        str += " Transmitter State: ";
+        str += " 发送机状态: ";
         str += "SEND is ending";
         Hprint.printlntDebugInfo(this ,str);
         if (this.subChannelStates[index].endEventUidTransmitterNAV != -1){
@@ -685,7 +685,7 @@ class MPChannel implements IF_HprintNode{
     private void endEventReceiverRECEIVE(int index){
         if (this.subChannelStates[index].numReceive == 1){
             String str = getStringSubChannel(subChannelUids[index]);
-            str += " Receiver State: ";
+            str += " 接收机状态: ";
             str += "RECEIVE is ending";
             Hprint.printlntDebugInfo(this ,str);
             receiverTurnToIDLE(index);
@@ -722,35 +722,35 @@ class MPChannel implements IF_HprintNode{
     //统一状态转移接口
     private void transmitterTurnToIDLE(int index){
         String str = getStringSubChannel(subChannelUids[index]);
-        str += " Transmitter State: ";
+        str += " 发送机状态: ";
         str += subChannelStates[index].stateTransmitter+"->"+StateSubChannel.IDLE;
         Hprint.printlntDebugInfo(this, str);
         subChannelStates[index].stateTransmitter = StateSubChannel.IDLE;
     }
     private void transmitterTurnToSEND(int index){
         String str = getStringSubChannel(subChannelUids[index]);
-        str += " Transmitter State: ";
+        str += " 发送机状态: ";
         str += subChannelStates[index].stateTransmitter+"->"+StateSubChannel.SEND;
         Hprint.printlntDebugInfo(this, str);
         subChannelStates[index].stateTransmitter = StateSubChannel.SEND;
     }
     private void transmitterTurnToNAV(int index){
         String str = getStringSubChannel(subChannelUids[index]);
-        str += " Transmitter State: ";
+        str += " 发送机状态: ";
         str += subChannelStates[index].stateTransmitter+"->"+StateSubChannel.NAV;
         Hprint.printlntDebugInfo(this, str);
         subChannelStates[index].stateTransmitter = StateSubChannel.NAV;
     }
     private void receiverTurnToIDLE(int index){
         String str = getStringSubChannel(subChannelUids[index]);
-        str += " Receiver State: ";
+        str += " 接收机状态: ";
         str += subChannelStates[index].stateReceiver+"->"+StateSubChannel.IDLE;
         Hprint.printlntDebugInfo(this, str);
         subChannelStates[index].stateReceiver = StateSubChannel.IDLE;
     }
     private void receiverTurnToRECEIVE(int index){
         String str = getStringSubChannel(subChannelUids[index]);
-        str += " Receiver State: ";
+        str += " 接收机状态: ";
         str += subChannelStates[index].stateReceiver+"->"+StateSubChannel.RECEIVE;
         Hprint.printlntDebugInfo(this, str);
         subChannelStates[index].stateReceiver = StateSubChannel.RECEIVE;
@@ -1533,8 +1533,8 @@ class MPSendPacket implements IF_HprintNode{
         class SendPacketBegin implements IF_Event{
             @Override
             public void run() {
-                String str = "begin sending "+packet.getStringUid()+" on ";
-                str += SubChannel.getSubChannel(subChannelUid).getStringUid();
+                String str = "开始在"+SubChannel.getSubChannel(subChannelUid).getStringUid();
+                str += "上发送"+packet.getStringUid();
                 Hprint.printlntDebugInfo(self, str);
                 double transTime = SubChannel.getSubChannel(subChannelUid).send(packet);
                 Simulator.addEvent(transTime, new SendPacketEnd());

@@ -13,7 +13,8 @@ public class SubChannel implements IF_Simulator, IF_HprintNode{
     private Channel channel;
     private IF_Channel[] devices;
 
-    private double bps = 1000;
+    private double bps = 1000000;
+    private double delay = 50*TimeUnitValue.us;
 
     public SubChannel(Channel channel){
         Hprint.register(this);
@@ -29,7 +30,13 @@ public class SubChannel implements IF_Simulator, IF_HprintNode{
             @Override
             public void run() {
                 for (int i = 0 ; i < devices.length ; i++){
-                    devices[i].receive(getUid(), packet);
+                    IF_Channel device = devices[i];
+                    Simulator.addEvent(delay, new IF_Event() {
+                        @Override
+                        public void run() {
+                            device.receive(getUid(), packet);
+                        }
+                    });
                 }
             }
         });
